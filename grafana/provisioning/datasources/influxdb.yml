@@ -11,6 +11,8 @@ datasources:
       defaultBucket: stocks
       tlsSkipVerify: true
     secureJsonData:
-      token: my-super-secret-admin-token
+    # NOTE: Override this token in production by rebuilding the container with
+    # INFLUXDB_TOKEN set in your .env file (matches docker-compose.yml default).
+    token: my-super-secret-admin-token
     editable: true
     isDefault: true

@@ -50,7 +50,7 @@ def test_run_script_handles_exception_gracefully():
     code = "raise ValueError('oops')"
     alerts = run_script(code, {"symbol": "AAPL"})
     assert len(alerts) == 1
-    assert "Script error" in alerts[0]
+    assert "Script execution failed" in alerts[0]
 
 
 def test_run_script_restricted_builtins():
@@ -58,4 +58,4 @@ def test_run_script_restricted_builtins():
     code = "__import__('os').system('echo hello')"
     alerts = run_script(code, {"symbol": "AAPL"})
     # Should raise NameError because __import__ is not in safe builtins
-    assert any("Script error" in a for a in alerts)
+    assert any("Script execution failed" in a for a in alerts)

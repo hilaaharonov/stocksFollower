@@ -31,7 +31,7 @@ _SAFE_BUILTINS = {
     "list": list,
     "max": max,
     "min": min,
-    "print": print,
+
     "range": range,
     "round": round,
     "sorted": sorted,
@@ -61,7 +61,7 @@ def run_script(code: str, stock_data: dict) -> list[str]:
         exec(code, safe_globals)  # noqa: S102
     except Exception as exc:
         logger.error("Script execution error: %s", exc)
-        context["alerts"].append(f"Script error: {exc}")
+        context["alerts"].append("Script execution failed. Check the server logs for details.")
     return list(context.get("alerts", []))
 
 
