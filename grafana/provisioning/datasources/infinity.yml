@@ -1,0 +1,14 @@
+apiVersion: 1
+
+datasources:
+  - name: Stocks API
+    type: yesoreyeram-infinity-datasource
+    uid: infinity
+    access: proxy
+    isDefault: true
+    editable: true
+    jsonData:
+      # Allow the Infinity plugin to call our backend container.
+      # The backend is reachable inside the Docker network at this address.
+      allowedHosts:
+        - http://stocks_backend:8000
