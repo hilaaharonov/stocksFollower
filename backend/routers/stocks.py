@@ -1,109 +1,65 @@
-"""Stocks router: manage watched stocks and retrieve price data."""
+"""Stocks router: list watched stocks and serve real-time price data."""
 
 import logging
-from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
-from pydantic import BaseModel
-from sqlalchemy.orm import Session
+from fastapi import APIRouter, HTTPException, Query
 
-from database import WatchedStock, get_db
-from services.influxdb_writer import query_latest_prices, write_price_batch
-from services.stock_fetcher import fetch_stock_info, fetch_historical_data
+from config import settings
+from services.stock_fetcher import get_stock_quote, get_stock_history
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/stocks", tags=["stocks"])
 
-
-class StockAdd(BaseModel):
-    symbol: str
-    name: Optional[str] = None
-
-
-class StockOut(BaseModel):
-    id: int
-    symbol: str
-    name: Optional[str]
-    active: bool
-
-    class Config:
-        from_attributes = True
+# Parse the watched symbols once at module load time.
+# Add more symbols by setting WATCHED_STOCKS in your .env file.
+_WATCHED_SYMBOLS: list[str] = [
+    s.strip().upper() for s in settings.watched_stocks.split(",") if s.strip()
+]
 
 
-@router.get("", response_model=list[StockOut])
-def list_stocks(db: Session = Depends(get_db)):
-    """List all watched stocks."""
-    return db.query(WatchedStock).all()
+@router.get("")
+def list_stocks() -> list[dict]:
+    """Return the list of watched stock symbols (from config)."""
+    return [{"symbol": s} for s in _WATCHED_SYMBOLS]
 
 
-@router.post("", response_model=StockOut, status_code=201)
-def add_stock(payload: StockAdd, db: Session = Depends(get_db)):
-    """Add a stock to the watch list."""
-    symbol = payload.symbol.upper().strip()
-    existing = db.query(WatchedStock).filter(WatchedStock.symbol == symbol).first()
-    if existing:
-        if not existing.active:
-            existing.active = True
-            db.commit()
-            db.refresh(existing)
-            return existing
-        raise HTTPException(status_code=409, detail=f"{symbol} is already being watched")
+@router.get("/{symbol}/quote")
+def get_quote(symbol: str) -> dict:
+    """Fetch the current live quote for a stock symbol.
 
-    # Fetch info from yfinance to get the company name
-    name = payload.name
-    if not name:
-        info = fetch_stock_info(symbol)
-        name = info.get("name", symbol)
-
-    stock = WatchedStock(symbol=symbol, name=name)
-    db.add(stock)
-    db.commit()
-    db.refresh(stock)
-    return stock
-
-
-@router.delete("/{symbol}", status_code=204)
-def remove_stock(symbol: str, db: Session = Depends(get_db)):
-    """Remove (deactivate) a stock from the watch list."""
+    Returns price, OHLC, volume, currency, and a UTC timestamp.
+    The data is fetched from yfinance on every request – nothing is persisted.
+    """
     symbol = symbol.upper()
-    stock = db.query(WatchedStock).filter(WatchedStock.symbol == symbol).first()
-    if not stock:
-        raise HTTPException(status_code=404, detail=f"{symbol} not found")
-    stock.active = False
-    db.commit()
+    data = get_stock_quote(symbol)
+    if data is None:
+        raise HTTPException(status_code=502, detail=f"Could not fetch live data for {symbol}")
+    return data
 
 
-@router.get("/{symbol}/data")
-def get_stock_data(
+@router.get("/{symbol}/history")
+def get_history(
     symbol: str,
-    limit: int = Query(default=100, ge=1, le=1000),
-    db: Session = Depends(get_db),
-):
-    """Get recent price data for a stock from InfluxDB."""
+    period: str = Query(
+        default="1mo",
+        description="yfinance period: 1d, 5d, 1mo, 3mo, 6mo, 1y, 2y, 5y",
+    ),
+    interval: str = Query(
+        default="1d",
+        description="yfinance interval: 1m, 5m, 15m, 30m, 1h, 1d, 1wk, 1mo",
+    ),
+) -> list[dict]:
+    """Fetch historical OHLCV data for a stock symbol.
+
+    Returns a list of OHLCV records sorted oldest-first.
+    Each record contains an ISO-8601 ``time`` field plus open, high, low,
+    close, and volume fields.
+    Data is fetched from yfinance on every request – nothing is persisted.
+    """
     symbol = symbol.upper()
-    stock = db.query(WatchedStock).filter(WatchedStock.symbol == symbol, WatchedStock.active == True).first()  # noqa: E712
-    if not stock:
-        raise HTTPException(status_code=404, detail=f"{symbol} not found in watch list")
-    prices = query_latest_prices(symbol, limit=limit)
-    return {"symbol": symbol, "count": len(prices), "data": prices}
-
-
-@router.post("/{symbol}/fetch", status_code=202)
-def trigger_fetch(
-    symbol: str,
-    period: str = Query(default="1mo", description="yfinance period, e.g. 1d, 5d, 1mo, 3mo, 1y"),
-    interval: str = Query(default="1d", description="yfinance interval, e.g. 1m, 5m, 1h, 1d"),
-    db: Session = Depends(get_db),
-):
-    """Manually trigger a historical data fetch for a stock."""
-    symbol = symbol.upper()
-    stock = db.query(WatchedStock).filter(WatchedStock.symbol == symbol).first()
-    if not stock:
-        raise HTTPException(status_code=404, detail=f"{symbol} not found in watch list")
-
-    records = fetch_historical_data(symbol, period=period, interval=interval)
+    records = get_stock_history(symbol, period=period, interval=interval)
     if not records:
-        raise HTTPException(status_code=502, detail=f"No data returned for {symbol}")
-
-    write_price_batch(records)
-    return {"symbol": symbol, "fetched": len(records), "period": period, "interval": interval}
+        raise HTTPException(
+            status_code=502, detail=f"No historical data available for {symbol}"
+        )
+    return records

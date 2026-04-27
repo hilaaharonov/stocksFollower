@@ -7,39 +7,9 @@ services:
     ports:
       - "8000:8000"
     environment:
-      - INFLUXDB_URL=http://influxdb:8086
-      - INFLUXDB_TOKEN=${INFLUXDB_TOKEN:-my-super-secret-admin-token}
-      - INFLUXDB_ORG=${INFLUXDB_ORG:-stocks}
-      - INFLUXDB_BUCKET=${INFLUXDB_BUCKET:-stocks}
-      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
-      - FETCH_INTERVAL_SECONDS=${FETCH_INTERVAL_SECONDS:-300}
-      - DATABASE_URL=sqlite:///./stocks_meta.db
-    volumes:
-      - backend_data:/app/data
-    depends_on:
-      influxdb:
-        condition: service_healthy
-    restart: unless-stopped
-
-  influxdb:
-    image: influxdb:2.7
-    container_name: stocks_influxdb
-    ports:
-      - "8086:8086"
-    environment:
-      - DOCKER_INFLUXDB_INIT_MODE=setup
-      - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=adminpassword
-      - DOCKER_INFLUXDB_INIT_ORG=${INFLUXDB_ORG:-stocks}
-      - DOCKER_INFLUXDB_INIT_BUCKET=${INFLUXDB_BUCKET:-stocks}
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=${INFLUXDB_TOKEN:-my-super-secret-admin-token}
-    volumes:
-      - influxdb_data:/var/lib/influxdb2
-    healthcheck:
-      test: ["CMD", "influx", "ping"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
+      # Comma-separated list of ticker symbols to watch.
+      # Change these to follow different stocks.
+      - WATCHED_STOCKS=${WATCHED_STOCKS:-AAPL,MSFT,GOOGL}
     restart: unless-stopped
 
   grafana:
@@ -50,15 +20,14 @@ services:
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin
-      - GF_INSTALL_PLUGINS=
+      # Infinity datasource – queries any HTTP/JSON API (used to call the backend)
+      - GF_INSTALL_PLUGINS=yesoreyeram-infinity-datasource
     volumes:
       - grafana_data:/var/lib/grafana
       - ./grafana/provisioning:/etc/grafana/provisioning
     depends_on:
-      - influxdb
+      - backend
     restart: unless-stopped
 
 volumes:
-  influxdb_data:
   grafana_data:
-  backend_data:

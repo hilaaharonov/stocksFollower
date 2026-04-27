@@ -1,10 +1,10 @@
 # StocksFollower
 
-A self-hosted stock-tracking platform that:
-- **Fetches** OHLCV stock data (via yfinance) on a configurable schedule and stores it in **InfluxDB** for long-term retention
-- **Visualises** data in **Grafana** dashboards (pre-provisioned, Grafana-like graphs)
-- Exposes a **REST API** to add custom Python **scripts/alerts** that analyse stock movements
-- Generates **AI notes** on watched stocks (uses OpenAI when a key is configured, falls back to rule-based analysis)
+A minimal, self-hosted Grafana dashboard for tracking stock prices in **real-time**.
+
+- **No database** – price data is fetched from [yfinance](https://github.com/ranaroussi/yfinance) on every request and never stored.
+- **Grafana** visualises the data through the [Infinity datasource plugin](https://grafana.com/grafana/plugins/yesoreyeram-infinity-datasource/), which calls the backend API directly.
+- The **FastAPI backend** is a thin, stateless service; extending it with new endpoints is straightforward.
 
 ---
 
@@ -17,7 +17,7 @@ A self-hosted stock-tracking platform that:
 
 ```bash
 cp .env.example .env
-# (Optional) set OPENAI_API_KEY in .env for AI-powered notes
+# Edit WATCHED_STOCKS to list the symbols you want to follow
 ```
 
 ### 2. Start all services
@@ -26,93 +26,77 @@ cp .env.example .env
 docker compose up -d
 ```
 
-| Service  | URL                        | Credentials          |
-|----------|----------------------------|----------------------|
-| API docs | http://localhost:8000/docs  | –                    |
-| Grafana  | http://localhost:3000       | admin / admin         |
-| InfluxDB | http://localhost:8086       | admin / adminpassword |
+| Service  | URL                       | Credentials |
+|----------|---------------------------|-------------|
+| API docs | http://localhost:8000/docs | –           |
+| Grafana  | http://localhost:3000      | admin / admin |
+
+The Grafana dashboard is pre-provisioned and opens automatically in the **Stocks** folder.
+
+---
+
+## Configuration
+
+| Variable         | Default           | Description                                          |
+|------------------|-------------------|------------------------------------------------------|
+| `WATCHED_STOCKS` | `AAPL,MSFT,GOOGL` | Comma-separated list of ticker symbols to watch      |
+
+Edit `.env` and restart to change which stocks appear in the dashboard.
 
 ---
 
 ## API Overview
 
-### Stocks
+| Method | Path                              | Description                                         |
+|--------|-----------------------------------|-----------------------------------------------------|
+| `GET`  | `/api/stocks`                     | List watched symbols (from `WATCHED_STOCKS` config) |
+| `GET`  | `/api/stocks/{symbol}/quote`      | Live quote: price, OHLC, volume, currency           |
+| `GET`  | `/api/stocks/{symbol}/history`    | Historical OHLCV data (supports `period`/`interval`)|
+| `GET`  | `/health`                         | Health check                                        |
 
-| Method   | Path                         | Description                                  |
-|----------|------------------------------|----------------------------------------------|
-| `GET`    | `/api/stocks`                | List watched stocks                          |
-| `POST`   | `/api/stocks`                | Add a stock to the watch list                |
-| `DELETE` | `/api/stocks/{symbol}`       | Remove a stock                               |
-| `GET`    | `/api/stocks/{symbol}/data`  | Query stored OHLCV data from InfluxDB        |
-| `POST`   | `/api/stocks/{symbol}/fetch` | Manually trigger a historical data backfill  |
+### History query parameters
 
-### Scripts & Alerts
-
-| Method   | Path                           | Description                          |
-|----------|--------------------------------|--------------------------------------|
-| `GET`    | `/api/scripts`                 | List scripts                         |
-| `POST`   | `/api/scripts`                 | Create a new analysis script         |
-| `PUT`    | `/api/scripts/{id}`            | Update a script                      |
-| `DELETE` | `/api/scripts/{id}`            | Delete a script                      |
-| `POST`   | `/api/scripts/{id}/run`        | Manually run a script                |
-| `GET`    | `/api/alerts`                  | List triggered alerts                |
-| `POST`   | `/api/alerts/{id}/acknowledge` | Acknowledge an alert                 |
-
-### AI Notes
-
-| Method | Path                             | Description                           |
-|--------|----------------------------------|---------------------------------------|
-| `GET`  | `/api/ai/notes/{symbol}`         | Get latest AI note for a symbol       |
-| `POST` | `/api/ai/notes/{symbol}/refresh` | Generate / refresh AI note            |
-| `GET`  | `/api/ai/notes`                  | Get latest notes for all watched stocks |
-
----
-
-## Writing Analysis Scripts
-
-Scripts are plain Python snippets that receive a `context` dict with current
-stock data and can append messages to `context['alerts']`.
-
-**Available context keys:** `symbol`, `open`, `high`, `low`, `close`, `volume`
-
-**Example – alert when daily drop exceeds 5 %:**
-
-```python
-if context.get('close') and context.get('open'):
-    change_pct = (context['close'] - context['open']) / context['open'] * 100
-    if change_pct < -5:
-        context['alerts'].append(
-            f"{context['symbol']} dropped {change_pct:.2f}% today!"
-        )
-```
-
-Create the script via the API:
-
-```bash
-curl -X POST http://localhost:8000/api/scripts \
-  -H "Content-Type: application/json" \
-  -d '{
-    "name": "5% Drop Alert",
-    "symbol": "AAPL",
-    "code": "if context.get(\"close\") and context.get(\"open\"):\n    pct = (context[\"close\"] - context[\"open\"]) / context[\"open\"] * 100\n    if pct < -5:\n        context[\"alerts\"].append(f\"Dropped {pct:.2f}%\")"
-  }'
-```
-
-Scripts run automatically at every scheduled fetch. You can also trigger them
-manually with `POST /api/scripts/{id}/run`.
+| Parameter  | Default | Examples                              |
+|------------|---------|---------------------------------------|
+| `period`   | `1mo`   | `1d`, `5d`, `1mo`, `3mo`, `6mo`, `1y`, `2y`, `5y` |
+| `interval` | `1d`    | `1m`, `5m`, `15m`, `30m`, `1h`, `1d`, `1wk`       |
 
 ---
 
 ## Grafana Dashboard
 
-A pre-provisioned **StocksFollower** dashboard is available at
-`http://localhost:3000` (folder *Stocks*) immediately after startup.
+The pre-provisioned **StocksFollower** dashboard at `http://localhost:3000` includes:
 
-The dashboard includes:
-- **Close Price** time-series panel (multi-symbol, filterable via template variable)
-- **Volume** bar chart
+- **Price History** – time-series chart of OHLC prices
+- **Volume History** – bar chart of trading volume
+- **Live Price / Day High / Day Low / Volume** – stat panels with the latest quote
+- **Symbol**, **Period**, and **Interval** dropdown variables at the top
 
-Use the **Symbol** template variable at the top to toggle which stocks are displayed.
+The dashboard auto-refreshes every 5 minutes.
+
+---
+
+## Extending the Project
+
+The backend is organised for easy expansion:
+
+```
+backend/
+  main.py               # App entry point – register new routers here
+  config.py             # Settings from environment variables
+  routers/
+    stocks.py           # Existing stock endpoints
+    your_feature.py     # Add a new router here
+  services/
+    stock_fetcher.py    # yfinance wrapper
+    your_service.py     # Add new service logic here
+```
+
+To add a new feature:
+1. Create `backend/services/your_service.py` with the business logic.
+2. Create `backend/routers/your_feature.py` with the FastAPI routes.
+3. Register the router in `backend/main.py` with `app.include_router(...)`.
+4. Add new Grafana panels to `grafana/provisioning/dashboards/stocks.json`.
 
 ---
 
@@ -121,8 +105,5 @@ Use the **Symbol** template variable at the top to toggle which stocks are displ
 ```bash
 cd backend
 pip install -r requirements.txt
-# Run locally (connects to a local InfluxDB)
 uvicorn main:app --reload
-# Run tests
-pytest tests/ -v
 ```
